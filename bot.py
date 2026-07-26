@@ -1,3 +1,4 @@
+import asyncio
 import discord
 from discord.ext import commands
 from dotenv import load_dotenv
@@ -40,7 +41,9 @@ async def chat(ctx, *, message=None):
     async with ctx.typing():
 
         try:
-            reply = ask_friend(message)
+            # Run the synchronous AI request in a background thread
+            # so it doesn't block Discord's event loop.
+            reply = await asyncio.to_thread(ask_friend, message)
 
             if len(reply) <= 2000:
                 await ctx.send(reply)

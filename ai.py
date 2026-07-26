@@ -16,7 +16,7 @@ forced_mode = None
 
 
 def load_personality(filename):
-    with open(f"personalities/{filename}", "r", encoding="utf-8") as file:
+    with open(filename, "r", encoding="utf-8") as file:
         return file.read()
 
 
