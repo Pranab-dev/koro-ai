@@ -99,4 +99,19 @@ def ask_friend(message):
         ]
     )
 
-    return response.choices[0].message.content
+    print(response)
+
+    if not response.choices:
+        return "💀 K-KITTEN THE AI DIDN'T RETURN ANY RESPONSE."
+
+    choice = response.choices[0]
+
+    if choice.message is None:
+        return "💀 K-KITTEN THE AI SENT AN INVALID RESPONSE."
+
+    content = choice.message.content
+
+    if not content:
+        return "💀 K-KITTEN THE AI RETURNED NOTHING."
+
+    return content
