@@ -47,35 +47,38 @@ async def on_ready():
 # AI COMMANDS
 # ======================
 
-@bot.tree.command(name="chat", description="Chat with Koro AI")
-@app_commands.describe(message="Your message")
-async def chat(
-    interaction: discord.Interaction,
-    message: str
-):
+@bot.command()
+async def chat(ctx, *, message=None):
 
-    await interaction.response.defer(thinking=True)
-
-    try:
-        reply = await asyncio.to_thread(
-            ask_friend,
-            message
+    if not message:
+        await ctx.send(
+            "Enter something before chatting bruh🥀💔."
         )
+        return
 
-        if len(reply) <= 2000:
-            await interaction.followup.send(reply)
-        else:
-            for i in range(0, len(reply), 2000):
-                await interaction.followup.send(
-                    reply[i:i + 2000]
-                )
+    async with ctx.typing():
 
-    except Exception as e:
-        print("CHAT ERROR:", e)
-        await interaction.followup.send(
-            "💀 K-KITTEN MY BRAIN EXPLODED. TRY AGAIN."
-        )
+        try:
+            reply = await asyncio.to_thread(
+                ask_friend,
+                message
+            )
 
+            if len(reply) <= 2000:
+                await ctx.send(reply)
+
+            else:
+                for i in range(0, len(reply), 2000):
+                    await ctx.send(
+                        reply[i:i + 2000]
+                    )
+
+        except Exception as e:
+            print("CHAT ERROR:", e)
+
+            await ctx.send(
+                "AI BRAINCELSS FRIED. Please try again later."
+            )
 
 @bot.tree.command(name="mode", description="Change Koro's personality")
 @app_commands.describe(
@@ -141,7 +144,7 @@ async def help_command(
 
     embed.add_field(
         name="AI",
-        value="/chat\n/mode\n/status",
+        value="!chat <message>\n/mode\n/status",
         inline=False
     )
 
@@ -180,7 +183,7 @@ async def help_command(
     )
 
 
-@bot.tree.command(name="about", description="About Koro AI")
+@bot.tree.command(name="about", description="About Koro")
 async def about(
     interaction: discord.Interaction
 ):
