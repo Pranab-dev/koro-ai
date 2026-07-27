@@ -10,8 +10,8 @@ client = OpenAI(
     api_key=os.getenv("OPENROUTER_API_KEY")
 )
 
-# The mode currently being forced.
-# None = use random mode.
+# Current forced mode
+# None = random mode
 forced_mode = None
 
 
@@ -32,7 +32,11 @@ def choose_personality():
     if forced_mode == "socrates":
         return load_personality("socrates.txt")
 
-    # Random mode: 10% Normal, 45% Brainrot, 45% Socrates
+    # Random mode:
+    # 10% Normal
+    # 45% Brainrot
+    # 45% Socrates
+
     personalities = [
         "normal.txt",
         "normal.txt",
@@ -83,35 +87,43 @@ def get_mode():
 
 
 def ask_friend(message):
+
     personality = choose_personality()
 
-    response = client.chat.completions.create(
-        model="nvidia/nemotron-nano-12b-v2-vl:free",
-        messages=[
-            {
-                "role": "system",
-                "content": personality
-            },
-            {
-                "role": "user",
-                "content": message
-            }
-        ]
-    )
+    try:
+        response = client.chat.completions.create(
+            model="nvidia/nemotron-nano-12b-v2-vl:free",
+            messages=[
+                {
+                    "role": "system",
+                    "content": personality
+                },
+                {
+                    "role": "user",
+                    "content": message
+                }
+            ]
+        )
 
-    print(response)
+        if not response.choices:
+            return 'Koro says - "Error 404 Not Found."'
 
-    if not response.choices:
-        return "💀 K-KITTEN THE AI DIDN'T RETURN ANY RESPONSE."
+        choice = response.choices[0]
 
-    choice = response.choices[0]
+        if choice.message is None:
+            return "Koro went to get milk and never returned."
 
-    if choice.message is None:
-        return "💀 K-KITTEN THE AI SENT AN INVALID RESPONSE."
+        content = choice.message.content
 
-    content = choice.message.content
+        if not content:
+            return "Estimated Time for response is 100 years."
 
-    if not content:
-        return "💀 K-KITTEN THE AI RETURNED NOTHING."
+        return content
 
-    return content
+    except Exception as e:
+        print("AI ERROR:", e)
+
+        return (
+            "💀 Koro's brain lagged.\n"
+            "Try again in a few seconds."
+        )
