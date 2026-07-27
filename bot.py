@@ -1,5 +1,7 @@
 import asyncio
 import os
+import random
+import time
 
 import discord
 from discord.ext import commands
@@ -12,123 +14,74 @@ load_dotenv()
 
 TOKEN = os.getenv("DISCORD_TOKEN")
 
+GITHUB = "https://github.com/Pranab-dev/koro-ai"
+
+start_time = time.time()
+
 intents = discord.Intents.default()
 intents.message_content = True
 
 bot = commands.Bot(
     command_prefix="!",
-    intents=intents
+    intents=intents,
+    help_command=None
 )
 
+
+# ======================
+# EVENTS
+# ======================
 
 @bot.event
 async def on_ready():
     try:
         synced = await bot.tree.sync()
-        print(f"✅ Synced {len(synced)} slash command(s).")
+        print(f"✅ Synced {len(synced)} slash commands")
     except Exception as e:
-        print(f"❌ Failed to sync slash commands: {e}")
+        print(f"❌ Sync error: {e}")
 
-    print(f"Koro AI is online as {bot.user}")
-
-
-# ------------------------
-# PING
-# ------------------------
-
-@bot.command()
-async def ping(ctx):
-    await ctx.send("🏓 Pong!")
+    print(f"🤖 Koro online as {bot.user}")
 
 
-@bot.tree.command(name="ping", description="Check if Koro is online.")
-async def slash_ping(interaction: discord.Interaction):
-    await interaction.response.send_message("🏓 Pong!")
+# ======================
+# AI COMMANDS
+# ======================
 
-
-# ------------------------
-# CHAT
-# ------------------------
-
-@bot.command()
-async def chat(ctx, *, message=None):
-
-    if not message:
-        await ctx.send(
-            "K-KITTEN 😭 YOU FORGOT TO TELL ME WHAT TO CHAT ABOUT."
-        )
-        return
-
-    async with ctx.typing():
-        try:
-            reply = await asyncio.to_thread(ask_friend, message)
-
-            if len(reply) <= 2000:
-                await ctx.send(reply)
-            else:
-                for i in range(0, len(reply), 2000):
-                    await ctx.send(reply[i:i + 2000])
-
-        except Exception as e:
-            print("ERROR:", e)
-            await ctx.send(
-                "💀 K-KITTEN MY BRAIN EXPLODED. TRY AGAIN."
-            )
-
-
-@bot.tree.command(name="chat", description="Chat with Koro AI.")
-@app_commands.describe(message="Your message to Koro")
-async def slash_chat(interaction: discord.Interaction, message: str):
+@bot.tree.command(name="chat", description="Chat with Koro AI")
+@app_commands.describe(message="Your message")
+async def chat(
+    interaction: discord.Interaction,
+    message: str
+):
 
     await interaction.response.defer(thinking=True)
 
     try:
-        reply = await asyncio.to_thread(ask_friend, message)
+        reply = await asyncio.to_thread(
+            ask_friend,
+            message
+        )
 
         if len(reply) <= 2000:
             await interaction.followup.send(reply)
         else:
             for i in range(0, len(reply), 2000):
-                await interaction.followup.send(reply[i:i + 2000])
+                await interaction.followup.send(
+                    reply[i:i + 2000]
+                )
 
     except Exception as e:
-        print("ERROR:", e)
+        print("CHAT ERROR:", e)
         await interaction.followup.send(
             "💀 K-KITTEN MY BRAIN EXPLODED. TRY AGAIN."
         )
 
 
-# ------------------------
-# KORO MODE
-# ------------------------
-
-@bot.command()
-async def koro(ctx, mode=None):
-
-    if mode is None:
-        await ctx.send(
-            "🗿 Usage: `!koro normal`, `!koro brainrot`, `!koro socrates`, or `!koro random`"
-        )
-        return
-
-    mode = mode.lower()
-
-    if set_mode(mode):
-        if mode == "random":
-            await ctx.send("🎲 Koro's personality is random again.")
-        else:
-            await ctx.send(f"🔄 Koro is now in **{mode.upper()} MODE**.")
-    else:
-        await ctx.send(
-            "❌ Unknown mode. Try `normal`, `brainrot`, `socrates`, or `random`."
-        )
-
-
-@bot.tree.command(name="koro", description="Change Koro's personality.")
+@bot.tree.command(name="mode", description="Change Koro's personality")
 @app_commands.describe(
     mode="normal, brainrot, socrates or random"
 )
-async def slash_koro(
+async def mode(
     interaction: discord.Interaction,
     mode: str
 ):
@@ -136,52 +89,314 @@ async def slash_koro(
     mode = mode.lower()
 
     if set_mode(mode):
+
         if mode == "random":
             await interaction.response.send_message(
-                "🎲 Koro's personality is random again."
+                "🎲 Koro is now random again."
             )
+
         else:
             await interaction.response.send_message(
-                f"🔄 Koro is now in **{mode.upper()} MODE**."
+                f"🔄 Koro changed to **{mode.upper()} MODE**."
             )
+
     else:
         await interaction.response.send_message(
-            "❌ Unknown mode."
+            "❌ Invalid mode."
         )
 
 
-# ------------------------
-# STATUS
-# ------------------------
+@bot.tree.command(name="status", description="Show Koro's current mode")
+async def status(
+    interaction: discord.Interaction
+):
 
-@bot.command()
-async def status(ctx):
+    current = get_mode()
 
-    mode = get_mode()
-
-    if mode == "random":
-        await ctx.send(
-            "🎲 Current mode: **RANDOM** (10% Normal / 45% Brainrot / 45% Socrates)"
-        )
-    else:
-        await ctx.send(
-            f"🎭 Current mode: **{mode.upper()}**"
-        )
-
-
-@bot.tree.command(name="status", description="Show Koro's current mode.")
-async def slash_status(interaction: discord.Interaction):
-
-    mode = get_mode()
-
-    if mode == "random":
-        await interaction.response.send_message(
-            "🎲 Current mode: **RANDOM** (10% Normal / 45% Brainrot / 45% Socrates)"
+    if current == "random":
+        text = (
+            "🎲 Current mode: **RANDOM**\n"
+            "10% Normal / 45% Brainrot / 45% Socrates"
         )
     else:
-        await interaction.response.send_message(
-            f"🎭 Current mode: **{mode.upper()}**"
-        )
+        text = f"🎭 Current mode: **{current.upper()}**"
 
+    await interaction.response.send_message(text)
+
+
+# ======================
+# INFORMATION
+# ======================
+
+@bot.tree.command(name="help", description="Show Koro commands")
+async def help_command(
+    interaction: discord.Interaction
+):
+
+    embed = discord.Embed(
+        title="🤖 Koro Commands",
+        description="Here are Koro's commands:",
+        color=discord.Color.blue()
+    )
+
+    embed.add_field(
+        name="AI",
+        value="/chat\n/mode\n/status",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Info",
+        value="/help\n/about\n/invite",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Utility",
+        value="/ping\n/uptime",
+        inline=False
+    )
+
+    embed.add_field(
+        name="User & Server",
+        value="/userinfo\n/server\n/membercount",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Fun",
+        value="/coinflip\n/dice\n/joke",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Support",
+        value="/support\n/feedback",
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+@bot.tree.command(name="about", description="About Koro AI")
+async def about(
+    interaction: discord.Interaction
+):
+
+    embed = discord.Embed(
+        title="🤖 Koro",
+        description="An AI-powered Discord bot.",
+        color=discord.Color.purple()
+    )
+
+    embed.add_field(
+        name="AI Model",
+        value="NVIDIA Nemotron Nano 12B",
+        inline=False
+    )
+
+    embed.add_field(
+        name="Developer",
+        value="Pranab",
+        inline=False
+    )
+
+    embed.add_field(
+        name="GitHub",
+        value=GITHUB,
+        inline=False
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+@bot.tree.command(name="invite", description="Invite Koro to your server")
+async def invite(
+    interaction: discord.Interaction
+):
+
+    invite_link = "https://discord.com/oauth2/authorize?client_id=1368858230993719308&permissions=68608&integration_type=0&scope=bot"
+
+    embed = discord.Embed(
+        title="🤖 Invite Koro",
+        description=f"Add Koro to your Discord server:\n\n[Click here to invite Koro]({invite_link})",
+        color=discord.Color.blue()
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+# ======================
+# UTILITY
+# ======================
+
+@bot.tree.command(name="ping", description="Check latency")
+async def ping(
+    interaction: discord.Interaction
+):
+
+    latency = round(bot.latency * 1000)
+
+    await interaction.response.send_message(
+        f"🏓 Pong! `{latency}ms`"
+    )
+
+
+@bot.tree.command(name="uptime", description="Show Koro uptime")
+async def uptime(
+    interaction: discord.Interaction
+):
+
+    seconds = int(time.time() - start_time)
+
+    hours = seconds // 3600
+    minutes = (seconds % 3600) // 60
+
+    await interaction.response.send_message(
+        f"⏱ Online for **{hours}h {minutes}m**"
+    )
+
+
+# ======================
+# USER / SERVER
+# ======================
+
+@bot.tree.command(name="userinfo", description="Show user information")
+@app_commands.describe(
+    user="User to check"
+)
+async def userinfo(
+    interaction: discord.Interaction,
+    user: discord.Member = None
+):
+
+    user = user or interaction.user
+
+    embed = discord.Embed(
+        title=f"👤 {user.name}",
+        color=discord.Color.green()
+    )
+
+    embed.set_thumbnail(
+        url=user.display_avatar.url
+    )
+
+    embed.add_field(
+        name="ID",
+        value=user.id
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+@bot.tree.command(name="server", description="Show server information")
+async def server(
+    interaction: discord.Interaction
+):
+
+    guild = interaction.guild
+
+    embed = discord.Embed(
+        title=f"🏠 {guild.name}",
+        color=discord.Color.orange()
+    )
+
+    embed.add_field(
+        name="Members",
+        value=guild.member_count
+    )
+
+    embed.add_field(
+        name="Owner",
+        value=guild.owner
+    )
+
+    await interaction.response.send_message(
+        embed=embed
+    )
+
+
+@bot.tree.command(name="membercount", description="Show member count")
+async def membercount(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.send_message(
+        f"👥 Members: **{interaction.guild.member_count}**"
+    )
+
+
+# ======================
+# FUN
+# ======================
+
+@bot.tree.command(name="coinflip", description="Flip a coin")
+async def coinflip(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.send_message(
+        random.choice(
+            ["🪙 Heads!", "🪙 Tails!"]
+        )
+    )
+
+
+@bot.tree.command(name="dice", description="Roll a dice")
+async def dice(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.send_message(
+        f"🎲 You rolled **{random.randint(1,6)}**"
+    )
+
+
+@bot.tree.command(name="joke", description="Tell a joke")
+async def joke(
+    interaction: discord.Interaction
+):
+
+    jokes = [
+        "404 joke not found."
+    ]
+
+    await interaction.response.send_message(
+        random.choice(jokes)
+    )
+
+
+# ======================
+# SUPPORT
+# ======================
+
+@bot.tree.command(name="support", description="Get Koro support")
+async def support(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.send_message(
+        f"🛠 Koro Support\n\nGitHub:\n{GITHUB}"
+    )
+
+
+@bot.tree.command(name="feedback", description="Send feedback")
+async def feedback(
+    interaction: discord.Interaction
+):
+
+    await interaction.response.send_message(
+        f"💡 Submit feedback here:\n{GITHUB}/issues"
+    )
+
+
+# ======================
 
 bot.run(TOKEN)
