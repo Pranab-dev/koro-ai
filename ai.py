@@ -2,6 +2,7 @@ from openai import OpenAI
 from dotenv import load_dotenv
 import os
 import random
+import time
 
 load_dotenv()
 
@@ -13,6 +14,15 @@ client = OpenAI(
 # Current forced mode
 # None = random mode
 forced_mode = None
+
+# ======================
+# AI SETTINGS
+# ======================
+
+MODEL = "google/gemma-4-31b-it:free"
+
+MAX_RETRIES = 2
+RETRY_DELAY = 2
 
 
 def load_personality(filename):
@@ -62,7 +72,9 @@ def choose_personality():
         "socrates.txt"
     ]
 
-    return load_personality(random.choice(personalities))
+    return load_personality(
+        random.choice(personalities)
+    )
 
 
 def set_mode(mode):
@@ -90,40 +102,63 @@ def ask_friend(message):
 
     personality = choose_personality()
 
-    try:
-        response = client.chat.completions.create(
-            model="nvidia/nemotron-nano-12b-v2-vl:free",
-            messages=[
-                {
-                    "role": "system",
-                    "content": personality
-                },
-                {
-                    "role": "user",
-                    "content": message
-                }
-            ]
-        )
+    for attempt in range(MAX_RETRIES + 1):
 
-        if not response.choices:
-            return 'Koro says - "Error 404 Not Found."'
+        try:
 
-        choice = response.choices[0]
+            response = client.chat.completions.create(
+                model=MODEL,
+                messages=[
+                    {
+                        "role": "system",
+                        "content": personality
+                    },
+                    {
+                        "role": "user",
+                        "content": message
+                    }
+                ]
+            )
 
-        if choice.message is None:
-            return "Koro went to get milk and never returned."
+            if not response.choices:
+                return 'Koro says - "Error 404 Not Found."'
 
-        content = choice.message.content
+            choice = response.choices[0]
 
-        if not content:
-            return "Estimated Time for response is 100 years."
+            if choice.message is None:
+                return "Koro went to get milk and never returned."
 
-        return content
+            content = choice.message.content
 
-    except Exception as e:
-        print("AI ERROR:", e)
+            if not content:
+                return "Estimated Time for response is 100 years."
 
-        return (
-            "💀 Koro's brain lagged.\n"
-            "Try again in a few seconds."
-        )
+            return content
+
+        except Exception as e:
+
+            print(
+                f"AI ERROR "
+                f"(attempt {attempt + 1}/{MAX_RETRIES + 1}):",
+                e
+            )
+
+            if attempt < MAX_RETRIES:
+
+                print(
+                    f"⏳ Retrying in "
+                    f"{RETRY_DELAY} seconds..."
+                )
+
+                time.sleep(RETRY_DELAY)
+
+            else:
+
+                print(
+                    "❌ All AI attempts failed."
+                )
+
+                return (
+                    "💀 Koro's brain lagged.\n"
+                    "Try again in a few seconds."
+                )
