@@ -362,13 +362,13 @@ async def about(
 
     embed.add_field(
         name="AI Model",
-        value="Google Gemma 4 31B Instruct",
+        value="Nvidia: Nemotron Nano 9B V2",
         inline=False
     )
 
     embed.add_field(
         name="Developer",
-        value="Pranab",
+        value="@thepixelriftx",
         inline=False
     )
 

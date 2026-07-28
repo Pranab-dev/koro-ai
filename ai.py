@@ -19,7 +19,7 @@ forced_mode = None
 # AI SETTINGS
 # ======================
 
-MODEL = "openrouter/free"
+MODEL = "nvidia/nemotron-nano-9b-v2:free"
 
 MAX_RETRIES = 2
 RETRY_DELAY = 2
