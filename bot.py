@@ -22,15 +22,16 @@ start_time = time.time()
 # SERVER TAG SETTINGS
 # ======================
 
+TARGET_GUILD_ID = 1276610033140109483
 V0ID_TAG = "V0ID"
 GUILD_SUPPORTER_ROLE_ID = 1358039885843402832
+
 
 # ======================
 # INTENTS
 # ======================
 
 intents = discord.Intents.default()
-
 intents.message_content = True
 intents.members = True
 
@@ -48,92 +49,89 @@ bot = commands.Bot(
 @tasks.loop(seconds=60)
 async def check_server_tags():
 
-    for guild in bot.guilds:
+    guild = bot.get_guild(TARGET_GUILD_ID)
 
-        role = guild.get_role(
-            GUILD_SUPPORTER_ROLE_ID
+    if guild is None:
+        print("❌ Target server not found.")
+        return
+
+    role = guild.get_role(
+        GUILD_SUPPORTER_ROLE_ID
+    )
+
+    if role is None:
+        print("⚠️ Guild Supporter role not found.")
+        return
+
+    me = guild.me
+
+    if me is None:
+        return
+
+    if not me.guild_permissions.manage_roles:
+        print("❌ Koro needs Manage Roles.")
+        return
+
+    if role >= me.top_role:
+        print(
+            "❌ Koro's role must be above "
+            "Guild Supporter."
+        )
+        return
+
+    for member in guild.members:
+
+        if member.bot:
+            continue
+
+        primary = member.primary_guild
+
+        has_v0id = (
+            primary is not None
+            and primary.identity_enabled is True
+            and primary.identity_guild_id == guild.id
+            and primary.tag == V0ID_TAG
         )
 
-        if role is None:
-            print(
-                f"⚠️ Guild Supporter role not found in {guild.name}"
-            )
-            continue
+        has_supporter = role in member.roles
 
-        me = guild.me
+        try:
 
-        if me is None:
-            continue
+            if has_v0id and not has_supporter:
 
-        if not me.guild_permissions.manage_roles:
-            print(
-                f"❌ Koro needs Manage Roles in {guild.name}"
-            )
-            continue
-
-        if role >= me.top_role:
-            print(
-                f"❌ Koro's role must be above "
-                f"Guild Supporter in {guild.name}"
-            )
-            continue
-
-        for member in guild.members:
-
-            # Ignore bots
-            if member.bot:
-                continue
-
-            primary = member.primary_guild
-
-            has_v0id = (
-                primary is not None
-                and primary.identity_enabled is True
-                and primary.identity_guild_id == guild.id
-                and primary.tag == V0ID_TAG
-            )
-
-            has_supporter = role in member.roles
-
-            try:
-
-                # V0ID detected → give Guild Supporter
-                if has_v0id and not has_supporter:
-
-                    await member.add_roles(
-                        role,
-                        reason="V0ID Server Tag detected"
-                    )
-
-                    print(
-                        f"🏷️ Added Guild Supporter to "
-                        f"{member} in {guild.name}"
-                    )
-
-                # V0ID removed → remove Guild Supporter
-                elif not has_v0id and has_supporter:
-
-                    await member.remove_roles(
-                        role,
-                        reason="V0ID Server Tag no longer detected"
-                    )
-
-                    print(
-                        f"🏷️ Removed Guild Supporter from "
-                        f"{member} in {guild.name}"
-                    )
-
-            except discord.Forbidden:
-                print(
-                    f"❌ Permission error modifying "
-                    f"{member} in {guild.name}"
+                await member.add_roles(
+                    role,
+                    reason="V0ID Server Tag detected"
                 )
 
-            except discord.HTTPException as e:
                 print(
-                    f"❌ Discord API error modifying "
-                    f"{member}: {e}"
+                    f"🏷️ Added Guild Supporter to "
+                    f"{member}"
                 )
+
+            elif not has_v0id and has_supporter:
+
+                await member.remove_roles(
+                    role,
+                    reason="V0ID Server Tag removed"
+                )
+
+                print(
+                    f"🏷️ Removed Guild Supporter from "
+                    f"{member}"
+                )
+
+        except discord.Forbidden:
+
+            print(
+                f"❌ Cannot modify role for {member}"
+            )
+
+        except discord.HTTPException as e:
+
+            print(
+                f"❌ Discord API error for {member}: {e}"
+            )
 
 
 @check_server_tags.before_loop
@@ -150,6 +148,7 @@ async def before_check_server_tags():
 async def on_ready():
 
     try:
+
         synced = await bot.tree.sync()
 
         print(
@@ -205,11 +204,7 @@ async def chat(ctx, *, message=None):
 
             else:
 
-                for i in range(
-                    0,
-                    len(reply),
-                    2000
-                ):
+                for i in range(0, len(reply), 2000):
 
                     await ctx.send(
                         reply[i:i + 2000]
@@ -284,7 +279,7 @@ async def status(
 
         text = (
             f"🎭 Current mode: "
-            f"**{current.upper()}**"
+            f"**{current.upper()} MODE**"
         )
 
     await interaction.response.send_message(
@@ -312,59 +307,37 @@ async def help_command(
 
     embed.add_field(
         name="AI",
-        value=(
-            "!chat <message>\n"
-            "/mode\n"
-            "/status"
-        ),
+        value="/chat\n/mode\n/status",
         inline=False
     )
 
     embed.add_field(
         name="Info",
-        value=(
-            "/help\n"
-            "/about\n"
-            "/invite"
-        ),
+        value="/help\n/about\n/invite",
         inline=False
     )
 
     embed.add_field(
         name="Utility",
-        value=(
-            "/ping\n"
-            "/uptime"
-        ),
+        value="/ping\n/uptime",
         inline=False
     )
 
     embed.add_field(
         name="User & Server",
-        value=(
-            "/userinfo\n"
-            "/server\n"
-            "/membercount"
-        ),
+        value="/userinfo\n/server\n/membercount",
         inline=False
     )
 
     embed.add_field(
         name="Fun",
-        value=(
-            "/coinflip\n"
-            "/dice\n"
-            "/joke"
-        ),
+        value="/coinflip\n/dice\n/joke",
         inline=False
     )
 
     embed.add_field(
         name="Support",
-        value=(
-            "/support\n"
-            "/feedback"
-        ),
+        value="/support\n/feedback",
         inline=False
     )
 
@@ -389,7 +362,7 @@ async def about(
 
     embed.add_field(
         name="AI Model",
-        value="NVIDIA Nemotron Nano 12B",
+        value="Google Gemma 4 31B Instruct",
         inline=False
     )
 
@@ -474,10 +447,7 @@ async def uptime(
     )
 
     hours = seconds // 3600
-
-    minutes = (
-        seconds % 3600
-    ) // 60
+    minutes = (seconds % 3600) // 60
 
     await interaction.response.send_message(
         f"⏱ Online for **{hours}h {minutes}m**"
@@ -560,8 +530,7 @@ async def membercount(
 ):
 
     await interaction.response.send_message(
-        f"👥 Members: "
-        f"**{interaction.guild.member_count}**"
+        f"👥 Members: **{interaction.guild.member_count}**"
     )
 
 
@@ -596,8 +565,7 @@ async def dice(
 ):
 
     await interaction.response.send_message(
-        f"🎲 You rolled "
-        f"**{random.randint(1, 6)}**"
+        f"🎲 You rolled **{random.randint(1, 6)}**"
     )
 
 
