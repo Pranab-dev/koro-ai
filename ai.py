@@ -19,7 +19,7 @@ forced_mode = None
 # AI SETTINGS
 # ======================
 
-MODEL = "google/gemma-4-31b-it:free"
+MODEL = "openrouter/free"
 
 MAX_RETRIES = 2
 RETRY_DELAY = 2
