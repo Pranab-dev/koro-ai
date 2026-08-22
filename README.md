@@ -1,8 +1,8 @@
-# 🤖 Koro AI
+# 🤖 Koro
 
 A customizable AI-powered Discord chatbot built with **Python**, **discord.py**, and **OpenRouter**.
 
-Koro AI can chat naturally, switch between multiple personalities, and run 24/7 on compatible hosting platforms.
+Koro can chat naturally, switch between multiple personalities, and run 24/7 on compatible hosting platforms.
 
 ---
 
@@ -82,12 +82,21 @@ python bot.py
 | Command           | Description                       |
 | ----------------- | --------------------------------- |
 | `!chat <message>` | Chat with Koro                    |
-| `!ping`           | Check if the bot is online        |
-| `!koro normal`    | Switch to Normal mode             |
-| `!koro brainrot`  | Switch to Brainrot mode           |
-| `!koro socrates`  | Switch to Socrates mode           |
-| `!koro random`    | Enable random personalities       |
-| `!status`         | View the current personality mode |
+| `/ping`           | Check latency                     |
+| `/mode`           | Change Koro's personality         |
+| `/status`         | Show Koro's current mode          |
+| `/about`          | About Koro                        |
+| `/userinfo`       | Show user information             |
+| `/uptime`         | Show Koro uptime                  |
+| `/support`        | Get Koro support                  |
+| `/server`         | Show server information           |
+| `/membercount`    | Show member count                 |
+| `/joke`           | Tell a joke                       |
+| `/help`           | Show Koro commands                |
+| `/invite`         | Invite Koro to your server        |
+| `/feedback`       | Send feedback                     |
+| `/dice`           | Roll a dice                       |
+| `/coinflip`       | Flip a coin                       |
 
 ---
 
@@ -144,7 +153,7 @@ If you have ideas for new personalities, features, or bug fixes, feel free to op
 
 If you enjoy this project, consider giving the repository a ⭐.
 
-It helps others discover Koro AI and motivates future development.
+It helps others discover Koro and motivates future development.
 
 ---
 
@@ -154,4 +163,4 @@ This project is licensed under the MIT License. See the LICENSE file for details
 
 ---
 
-Made with ❤️ by **Pranab**
+Made with ❤️ by **Pranab Mukherjee**
