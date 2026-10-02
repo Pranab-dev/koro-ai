@@ -19,7 +19,8 @@ forced_mode = None
 # AI SETTINGS
 # ======================
 
-MODEL = "nvidia/nemotron-nano-9b-v2:free"
+MODEL = "cohere/north-mini-code:free"
+
 
 MAX_RETRIES = 2
 RETRY_DELAY = 2
