@@ -18,19 +18,7 @@ GITHUB = "https://github.com/Pranab-dev/koro-ai"
 
 start_time = time.time()
 
-# ======================
-# SERVER TAG SETTINGS
-# ======================
-
-TARGET_GUILD_ID = 1276610033140109483
-V0ID_TAG = "V0ID"
-GUILD_SUPPORTER_ROLE_ID = 1358039885843402832
-
-
-# ======================
 # INTENTS
-# ======================
-
 intents = discord.Intents.default()
 intents.message_content = True
 intents.members = True
@@ -41,142 +29,26 @@ bot = commands.Bot(
     help_command=None
 )
 
-
-# ======================
-# SERVER TAG CHECKER
-# ======================
-
-@tasks.loop(seconds=60)
-async def check_server_tags():
-
-    guild = bot.get_guild(TARGET_GUILD_ID)
-
-    if guild is None:
-        print("❌ Target server not found.")
-        return
-
-    role = guild.get_role(
-        GUILD_SUPPORTER_ROLE_ID
-    )
-
-    if role is None:
-        print("⚠️ Guild Supporter role not found.")
-        return
-
-    me = guild.me
-
-    if me is None:
-        return
-
-    if not me.guild_permissions.manage_roles:
-        print("❌ Koro needs Manage Roles.")
-        return
-
-    if role >= me.top_role:
-        print(
-            "❌ Koro's role must be above "
-            "Guild Supporter."
-        )
-        return
-
-    for member in guild.members:
-
-        if member.bot:
-            continue
-
-        primary = member.primary_guild
-
-        has_v0id = (
-            primary is not None
-            and primary.identity_enabled is True
-            and primary.identity_guild_id == guild.id
-            and primary.tag == V0ID_TAG
-        )
-
-        has_supporter = role in member.roles
-
-        try:
-
-            if has_v0id and not has_supporter:
-
-                await member.add_roles(
-                    role,
-                    reason="V0ID Server Tag detected"
-                )
-
-                print(
-                    f"🏷️ Added Guild Supporter to "
-                    f"{member}"
-                )
-
-            elif not has_v0id and has_supporter:
-
-                await member.remove_roles(
-                    role,
-                    reason="V0ID Server Tag removed"
-                )
-
-                print(
-                    f"🏷️ Removed Guild Supporter from "
-                    f"{member}"
-                )
-
-        except discord.Forbidden:
-
-            print(
-                f"❌ Cannot modify role for {member}"
-            )
-
-        except discord.HTTPException as e:
-
-            print(
-                f"❌ Discord API error for {member}: {e}"
-            )
-
-
-@check_server_tags.before_loop
-async def before_check_server_tags():
-
-    await bot.wait_until_ready()
-
-
-# ======================
 # EVENTS
-# ======================
-
 @bot.event
 async def on_ready():
-
     try:
-
+        # Set your custom status text here
+        custom_status = discord.CustomActivity(name="/help • https://discord.gg/2yJEmys3by")
+        await bot.change_presence(activity=custom_status, status=discord.Status.online)
+        
+        # Sync your slash commands
         synced = await bot.tree.sync()
-
-        print(
-            f"✅ Synced {len(synced)} slash commands"
-        )
-
+        print(f"✔️ Synced {len(synced)} slash commands")
+        
     except Exception as e:
-
-        print(
-            f"❌ Sync error: {e}"
-        )
-
-    if not check_server_tags.is_running():
-
-        check_server_tags.start()
-
-        print(
-            "🏷️ Server Tag checker started"
-        )
-
-    print(
-        f"🤖 Koro online as {bot.user}"
-    )
+        print(f"❌ Sync error: {e}")
+        
+    print(f"🤖 Koro online as {bot.user}")
 
 
 # ======================
-# AI COMMANDS
-# ======================
+# AI COMMANDS# ======================
 
 @bot.command()
 async def chat(ctx, *, message=None):
@@ -307,7 +179,7 @@ async def help_command(
 
     embed.add_field(
         name="AI",
-        value="/chat\n/mode\n/status",
+        value="!chat\n/mode\n/status",
         inline=False
     )
 
@@ -362,7 +234,7 @@ async def about(
 
     embed.add_field(
         name="AI Model",
-        value="Nvidia: Nemotron Nano 9B V2",
+        value="Cohere North Mini Code",
         inline=False
     )
 
