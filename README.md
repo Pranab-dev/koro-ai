@@ -139,13 +139,13 @@ If you have ideas for new personalities, features, or bug fixes, feel free to op
 
 ## 📝 Roadmap
 
-* [] Conversation memory
-* [ ] Slash commands
+* [ ] Conversation memory
+* [x] Slash commands
 * [ ] Image generation
 * [ ] Per-server settings
 * [ ] Web dashboard
-* [ ] More AI models
-* [ ] Improved moderation
+* [x] More AI models
+* [x] Improved moderation
 
 ---
 
