@@ -139,7 +139,7 @@ If you have ideas for new personalities, features, or bug fixes, feel free to op
 
 ## 📝 Roadmap
 
-* [ ] Conversation memory
+* [] Conversation memory
 * [ ] Slash commands
 * [ ] Image generation
 * [ ] Per-server settings
