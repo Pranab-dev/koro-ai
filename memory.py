@@ -135,6 +135,44 @@ def is_guild_enabled(guild_id):
     settings = get_guild_settings(guild_id)
     return bool(settings["enabled"])
 
+def activate_guild_memory(guild_id, notice_channel_id):
+    """Activate collection after the public notice has been posted."""
+    guild_id = str(guild_id)
+    notice_channel_id = str(notice_channel_id)
+
+    with _connect() as db:
+        db.execute("""
+            INSERT INTO guild_settings (
+                guild_id, enabled, notice_acknowledged,
+                updated_by, updated_at
+            )
+            VALUES (?, 1, 0, 'automatic', ?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET
+                enabled = 1,
+                updated_at = excluded.updated_at
+        """, (guild_id, time.time()))
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS memory_notices (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                posted_at REAL NOT NULL
+            )
+        """)
+
+        db.execute("""
+            INSERT INTO memory_notices (
+                guild_id, channel_id, posted_at
+            )
+            VALUES (?, ?, ?)
+            ON CONFLICT(guild_id)
+            DO UPDATE SET
+                channel_id = excluded.channel_id,
+                posted_at = excluded.posted_at
+        """, (guild_id, notice_channel_id, time.time()))
+
+    return True
 
 def set_guild_enabled(
     guild_id,
@@ -522,8 +560,140 @@ def get_stats(guild_id):
     }
 
 
+def get_import_progress(guild_id, channel_id):
+    """Return the last saved historical-import checkpoint."""
+    with _connect() as db:
+        row = db.execute("""
+            SELECT last_message_id, complete
+            FROM import_progress
+            WHERE guild_id = ? AND channel_id = ?
+        """, (str(guild_id), str(channel_id))).fetchone()
+
+    return dict(row) if row else {
+        "last_message_id": None,
+        "complete": 0,
+    }
+
+
+def update_import_progress(
+    guild_id,
+    channel_id,
+    last_message_id=None,
+    complete=False,
+):
+    """Save a checkpoint so historical imports can resume."""
+    with _connect() as db:
+        db.execute("""
+            INSERT INTO import_progress (
+                guild_id, channel_id, last_message_id,
+                complete, updated_at
+            )
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(guild_id, channel_id)
+            DO UPDATE SET
+                last_message_id = excluded.last_message_id,
+                complete = excluded.complete,
+                updated_at = excluded.updated_at
+        """, (
+            str(guild_id),
+            str(channel_id),
+            str(last_message_id) if last_message_id else None,
+            int(bool(complete)),
+            time.time(),
+        ))
+
+
+def has_memory_notice(guild_id):
+    """Check whether automatic memory setup has posted its notice."""
+    with _connect() as db:
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS memory_notices (
+                guild_id TEXT PRIMARY KEY,
+                channel_id TEXT NOT NULL,
+                posted_at REAL NOT NULL
+            )
+        """)
+
+        row = db.execute(
+            "SELECT 1 FROM memory_notices WHERE guild_id = ?",
+            (str(guild_id),),
+        ).fetchone()
+
+    return row is not None
+
+
 # =========================
 # STARTUP
 # =========================
+
+
+def initialize_database():
+    with _connect() as db:
+        db.execute("PRAGMA journal_mode=WAL")
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS guild_settings (
+                guild_id TEXT PRIMARY KEY,
+                enabled INTEGER NOT NULL DEFAULT 0,
+                notice_acknowledged INTEGER NOT NULL DEFAULT 0,
+                updated_by TEXT,
+                updated_at REAL NOT NULL
+            )
+        """)
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS channel_settings (
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                enabled INTEGER NOT NULL,
+                updated_by TEXT,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (guild_id, channel_id)
+            )
+        """)
+
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS messages (
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                message_id TEXT NOT NULL,
+                author_id TEXT NOT NULL,
+                author_name TEXT NOT NULL,
+                content TEXT NOT NULL,
+                created_at REAL NOT NULL,
+                edited_at REAL,
+                PRIMARY KEY (guild_id, message_id)
+            )
+        """)
+
+        db.execute("""
+            CREATE INDEX IF NOT EXISTS idx_messages_guild_channel
+            ON messages (guild_id, channel_id, created_at)
+        """)
+
+        db.execute("""
+            CREATE VIRTUAL TABLE IF NOT EXISTS message_search
+            USING fts5(
+                guild_id UNINDEXED,
+                channel_id UNINDEXED,
+                message_id UNINDEXED,
+                author_name,
+                content,
+                tokenize='unicode61'
+            )
+        """)
+
+       
+        db.execute("""
+            CREATE TABLE IF NOT EXISTS import_progress (
+                guild_id TEXT NOT NULL,
+                channel_id TEXT NOT NULL,
+                last_message_id TEXT,
+                complete INTEGER NOT NULL DEFAULT 0,
+                updated_at REAL NOT NULL,
+                PRIMARY KEY (guild_id, channel_id)
+            )
+        """)
+
 
 initialize_database()

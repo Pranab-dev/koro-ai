@@ -30,6 +30,250 @@ bot = commands.Bot(
 )
 
 # ======================
+# AUTOMATIC MEMORY IMPORT
+# ======================
+
+history_import_tasks = {}
+
+MEMORY_NOTICE = (
+    "🧠 **Koro server memory notice**\n\n"
+    "Koro is enabling server memory. It stores text from eligible "
+    "public channels and can import available earlier message history "
+    "to help answer future questions. Collection continues for new "
+    "messages while memory is enabled. Staff-only/private channels are "
+    "excluded by default. Koro only imports history Discord permits it "
+    "to read. Archived messages may be retained until a server admin "
+    "clears them. Use `/memory status` to check status, "
+    "`/memory disable` to stop collection, and `/memory clear` to "
+    "delete the archive."
+)
+
+
+def can_bot_read_history(channel):
+    guild = getattr(channel, "guild", None)
+    if guild is None or guild.me is None:
+        return False
+
+    try:
+        permissions = channel.permissions_for(guild.me)
+        return permissions.view_channel and permissions.read_message_history
+    except (AttributeError, discord.DiscordException):
+        return False
+
+
+def eligible_for_automatic_memory(channel):
+    guild = getattr(channel, "guild", None)
+
+    if guild is None or is_private_channel(channel):
+        return False
+
+    if not isinstance(channel, (discord.TextChannel, discord.Thread)):
+        return False
+
+    if not can_bot_read_history(channel):
+        return False
+
+    return memory.is_channel_enabled(
+        guild.id,
+        channel.id,
+        is_private=False,
+    )
+
+
+async def import_channel_history(channel):
+    """Import accessible history, resuming from the saved checkpoint."""
+    guild = channel.guild
+    key = (guild.id, channel.id)
+
+    try:
+        while memory.is_guild_enabled(guild.id):
+            if not eligible_for_automatic_memory(channel):
+                return
+
+            progress = await asyncio.to_thread(
+                memory.get_import_progress,
+                guild.id,
+                channel.id,
+            )
+
+            if progress["complete"]:
+                return
+
+            last_id = progress["last_message_id"]
+            after = discord.Object(id=int(last_id)) if last_id else None
+            processed = 0
+
+            try:
+                async for message in channel.history(
+                    limit=None,
+                    oldest_first=True,
+                    after=after,
+                ):
+                    if not memory.is_guild_enabled(guild.id):
+                        return
+
+                    await asyncio.to_thread(
+                        remember_discord_message,
+                        message,
+                    )
+
+                    last_id = str(message.id)
+                    processed += 1
+
+                    # Save progress periodically in case the bot restarts.
+                    if processed % 50 == 0:
+                        await asyncio.to_thread(
+                            memory.update_import_progress,
+                            guild.id,
+                            channel.id,
+                            last_id,
+                            False,
+                        )
+
+                await asyncio.to_thread(
+                    memory.update_import_progress,
+                    guild.id,
+                    channel.id,
+                    last_id,
+                    True,
+                )
+
+                print(
+                    f"MEMORY IMPORT COMPLETE: "
+                    f"{guild.name} / {channel.name}"
+                )
+                return
+
+            except discord.Forbidden:
+                print(
+                    f"MEMORY IMPORT SKIPPED: no history permission "
+                    f"for {guild.name} / {channel.name}"
+                )
+                return
+
+            except discord.HTTPException as exc:
+                # Leave the checkpoint incomplete so a later run can retry.
+                print(
+                    f"MEMORY IMPORT PAUSED: "
+                    f"{guild.name} / {channel.name}: {exc}"
+                )
+                return
+
+    except Exception as exc:
+        print(
+            f"MEMORY IMPORT ERROR: "
+            f"{guild.name} / {channel.name}: {exc}"
+        )
+
+    finally:
+        history_import_tasks.pop(key, None)
+
+
+def start_channel_import(channel):
+    """Start at most one importer per channel."""
+    key = (channel.guild.id, channel.id)
+    existing = history_import_tasks.get(key)
+
+    if existing is not None and not existing.done():
+        return
+
+    task = asyncio.create_task(import_channel_history(channel))
+    history_import_tasks[key] = task
+
+
+async def start_server_imports(guild):
+    """Queue eligible public channels and accessible public threads."""
+    channels = list(guild.text_channels)
+
+    channels.extend(
+        thread for thread in guild.threads
+        if thread not in channels
+    )
+
+    # Include accessible archived public threads when Discord permits it.
+    for parent in guild.text_channels:
+        if not eligible_for_automatic_memory(parent):
+            continue
+
+        try:
+            async for thread in parent.archived_threads(
+                limit=None,
+                private=False,
+            ):
+                if thread not in channels:
+                    channels.append(thread)
+        except (discord.Forbidden, discord.HTTPException, AttributeError):
+            pass
+
+    for channel in channels:
+        if eligible_for_automatic_memory(channel):
+            start_channel_import(channel)
+
+
+async def ensure_automatic_memory(guild):
+    """Publish the notice first; activate only after it succeeds."""
+    try:
+        if memory.has_memory_notice(guild.id):
+            # Respect an administrator's decision to disable memory.
+            if memory.is_guild_enabled(guild.id):
+                await start_server_imports(guild)
+            return
+
+        candidates = []
+
+        if guild.system_channel is not None:
+            candidates.append(guild.system_channel)
+
+        candidates.extend(
+            channel for channel in guild.text_channels
+            if channel not in candidates
+        )
+
+        for channel in candidates:
+            if is_private_channel(channel):
+                continue
+
+            try:
+                permissions = channel.permissions_for(guild.me)
+
+                if not (
+                    permissions.view_channel
+                    and permissions.send_messages
+                ):
+                    continue
+
+                # The notice must be posted successfully before activation.
+                await channel.send(MEMORY_NOTICE)
+
+                await asyncio.to_thread(
+                    memory.activate_guild_memory,
+                    guild.id,
+                    channel.id,
+                )
+
+                print(
+                    f"AUTOMATIC MEMORY ENABLED: "
+                    f"{guild.name} in #{channel.name}"
+                )
+
+                await start_server_imports(guild)
+                return
+
+            except (discord.Forbidden, discord.HTTPException) as exc:
+                print(
+                    f"Could not post memory notice in "
+                    f"{guild.name} / #{channel.name}: {exc}"
+                )
+
+        print(
+            f"AUTOMATIC MEMORY NOT ENABLED for {guild.name}: "
+            "Koro could not publish the collection notice."
+        )
+
+    except Exception as exc:
+        print(f"AUTOMATIC MEMORY SETUP ERROR for {guild.name}: {exc}")
+
+# ======================
 # MEMORY HELPERS
 # ======================
 
@@ -599,39 +843,72 @@ async def memory_clear(interaction: discord.Interaction):
 
 bot.tree.add_command(memory_group)
 
+
 # EVENTS
 @bot.event
 async def on_ready():
     try:
-        # Set your custom status text here
-        custom_status = discord.CustomActivity(name="/help • https://discord.gg/2yJEmys3by")
-        await bot.change_presence(activity=custom_status, status=discord.Status.online)
-        
-        # Sync your slash commands
+        custom_status = discord.CustomActivity(
+            name="/help • https://discord.gg/2yJEmys3by"
+        )
+        await bot.change_presence(
+            activity=custom_status,
+            status=discord.Status.online,
+        )
+
         synced = await bot.tree.sync()
         print(f"✔️ Synced {len(synced)} slash commands")
-        
-    except Exception as e:
-        print(f"❌ Sync error: {e}")
-        
+
+    except Exception as exc:
+        print(f"❌ Sync error: {exc}")
+
     print(f"🤖 Koro online as {bot.user}")
+
+    # Set up eligible servers without repeating an existing notice.
+    for guild in bot.guilds:
+        await ensure_automatic_memory(guild)
+
+
+@bot.event
+async def on_guild_join(guild):
+    # A new server gets the notice before automatic collection begins.
+    await ensure_automatic_memory(guild)
+
+
+@bot.event
+async def on_guild_channel_create(channel):
+    # Import existing history in a newly created eligible text channel.
+    if (
+        isinstance(channel, discord.TextChannel)
+        and memory.is_guild_enabled(channel.guild.id)
+        and eligible_for_automatic_memory(channel)
+    ):
+        start_channel_import(channel)
+
+
+@bot.event
+async def on_thread_create(thread):
+    # Import an eligible newly created public thread.
+    if (
+        memory.is_guild_enabled(thread.guild.id)
+        and eligible_for_automatic_memory(thread)
+    ):
+        start_channel_import(thread)
 
 
 # ======================
 # AI COMMANDS# ======================
 
-
 @bot.command()
 async def chat(ctx, *, message=None):
-
     if not message:
         await ctx.send(
             "Enter something before chatting bruh🥀💔."
         )
         return
 
-    async with ctx.typing():
-        try:
+    try:
+        async with ctx.typing():
             memory_context = None
 
             # Retrieve server-specific memories only.
@@ -680,17 +957,28 @@ async def chat(ctx, *, message=None):
                 memory_context,
             )
 
+            # Split long replies to respect Discord's message limit.
             if len(reply) <= 2000:
                 await ctx.send(reply)
             else:
                 for i in range(0, len(reply), 2000):
                     await ctx.send(reply[i:i + 2000])
 
-        except Exception as e:
-            print("CHAT ERROR:", e)
+    except discord.Forbidden:
+        print(
+            "CHAT ERROR: Missing channel permissions."
+        )
 
+    except Exception as e:
+        print("CHAT ERROR:", e)
+
+        try:
             await ctx.send(
-                "AI BRAINCELSS FRIED. Please try again later."
+                "AI BRAINCELL FRIED. Please try again later."
+            )
+        except discord.Forbidden:
+            print(
+                "Could not send the chat error message."
             )
 
 
