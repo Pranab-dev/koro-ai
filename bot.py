@@ -2,7 +2,7 @@ import asyncio
 import os
 import random
 import time
-
+import memory
 import discord
 from discord.ext import commands, tasks
 from discord import app_commands
@@ -29,6 +29,576 @@ bot = commands.Bot(
     help_command=None
 )
 
+# ======================
+# MEMORY HELPERS
+# ======================
+
+def is_server_admin(member):
+    """Require Discord's administrator permission."""
+    return (
+        isinstance(member, discord.Member)
+        and member.guild_permissions.administrator
+    )
+
+
+def is_private_channel(channel):
+    """Treat channels hidden from @everyone as private by default."""
+    if isinstance(channel, discord.Thread):
+        return channel.is_private()
+
+    guild = getattr(channel, "guild", None)
+    if guild is None:
+        return True
+
+    default_role = guild.default_role
+    permissions = channel.permissions_for(default_role)
+
+    return not permissions.view_channel
+
+
+def can_read_channel(channel, member):
+    """Check that the user and bot can access channel history."""
+    user_permissions = channel.permissions_for(member)
+    bot_member = channel.guild.me
+
+    if bot_member is None:
+        return False
+
+    bot_permissions = channel.permissions_for(bot_member)
+
+    return (
+        user_permissions.view_channel
+        and bot_permissions.view_channel
+        and bot_permissions.read_message_history
+    )
+
+
+def get_searchable_channels(guild, member):
+    """
+    Return only enabled channels the requester may view and the bot
+    can read. Private channels require an explicit admin opt-in.
+    """
+    candidates = list(guild.text_channels)
+
+    # Include currently cached threads; private threads remain opt-in.
+    candidates.extend(
+        thread
+        for thread in guild.threads
+        if thread not in candidates
+    )
+
+    allowed = []
+
+    for channel in candidates:
+        try:
+            if not can_read_channel(channel, member):
+                continue
+
+            if not memory.is_channel_enabled(
+                guild.id,
+                channel.id,
+                is_private=is_private_channel(channel),
+            ):
+                continue
+
+            allowed.append(channel.id)
+
+        except (AttributeError, discord.DiscordException):
+            continue
+
+    return allowed
+
+
+def remember_discord_message(message):
+    """Store a Discord message through the memory module."""
+    if message.guild is None or message.author.bot:
+        return False
+
+    if not message.content or message.content.startswith("!"):
+        return False
+
+    if not isinstance(
+        message.channel,
+        (discord.TextChannel, discord.Thread),
+    ):
+        return False
+
+    return memory.store_message(
+        guild_id=message.guild.id,
+        channel_id=message.channel.id,
+        message_id=message.id,
+        author_id=message.author.id,
+        author_name=message.author.display_name,
+        content=message.content,
+        created_at=message.created_at.timestamp(),
+        is_private=is_private_channel(message.channel),
+    )
+
+# ======================
+# MEMORY EVENTS
+# ======================
+
+@bot.listen("on_message")
+async def memory_on_message(message):
+    try:
+        await asyncio.to_thread(
+            remember_discord_message,
+            message,
+        )
+    except Exception as exc:
+        print("MEMORY STORE ERROR:", exc)
+
+
+@bot.listen("on_message_edit")
+async def memory_on_message_edit(before, after):
+    try:
+        if after.guild is None:
+            return
+
+        if after.author.bot or not after.content:
+            await asyncio.to_thread(
+                memory.delete_message,
+                after.guild.id,
+                after.id,
+            )
+            return
+
+        await asyncio.to_thread(
+            remember_discord_message,
+            after,
+        )
+    except Exception as exc:
+        print("MEMORY EDIT ERROR:", exc)
+
+
+@bot.listen("on_message_delete")
+async def memory_on_message_delete(message):
+    try:
+        if message.guild is not None:
+            await asyncio.to_thread(
+                memory.delete_message,
+                message.guild.id,
+                message.id,
+            )
+    except Exception as exc:
+        print("MEMORY DELETE ERROR:", exc)
+
+# ======================
+# MEMORY COMMANDS
+# ======================
+
+memory_group = app_commands.Group(
+    name="memory",
+    description="Manage Koro's server-specific memory",
+)
+
+
+@memory_group.command(
+    name="status",
+    description="View this server's memory status",
+)
+async def memory_status(interaction: discord.Interaction):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "Use this command inside a server.",
+            ephemeral=True,
+        )
+        return
+
+    stats = await asyncio.to_thread(
+        memory.get_stats,
+        interaction.guild.id,
+    )
+
+    embed = discord.Embed(
+        title="🧠 Koro Memory Status",
+        color=discord.Color.blue(),
+    )
+    embed.add_field(
+        name="Collection",
+        value="Enabled" if stats["enabled"] else "Disabled",
+        inline=True,
+    )
+    embed.add_field(
+        name="Archived messages",
+        value=str(stats["messages"]),
+        inline=True,
+    )
+    embed.add_field(
+        name="Channels represented",
+        value=str(stats["channels"]),
+        inline=True,
+    )
+    embed.add_field(
+        name="Collection notice",
+        value=(
+            "Acknowledged"
+            if stats["notice_acknowledged"]
+            else "Not acknowledged"
+        ),
+        inline=False,
+    )
+
+    await interaction.response.send_message(
+        embed=embed,
+        ephemeral=True,
+    )
+
+
+@memory_group.command(
+    name="enable",
+    description="Enable server memory after displaying the collection notice",
+)
+async def memory_enable(interaction: discord.Interaction):
+    if interaction.guild is None or not is_server_admin(interaction.user):
+        await interaction.response.send_message(
+            "Administrator permission is required.",
+            ephemeral=True,
+        )
+        return
+
+    notice = (
+        "🧠 **Koro server memory notice**\n\n"
+        "This server is preparing to enable Koro's memory. Once enabled, "
+        "Koro will archive messages in eligible channels to answer "
+        "future questions using server context. Messages may be retained "
+        "until a server administrator clears them. Private channels are "
+        "excluded unless an administrator explicitly enables them. "
+        "Koro cannot access channels it lacks permission to read. "
+        "Use `/memory disable` to stop collection and `/memory clear` "
+        "to delete the archive.\n\n"
+        "A server administrator must confirm below to enable collection."
+    )
+
+    view = MemoryEnableView(interaction.guild.id)
+
+    await interaction.response.send_message(
+        notice,
+        view=view,
+    )
+
+
+@memory_group.command(
+    name="disable",
+    description="Stop collecting new messages in this server",
+)
+async def memory_disable(interaction: discord.Interaction):
+    if interaction.guild is None or not is_server_admin(interaction.user):
+        await interaction.response.send_message(
+            "Administrator permission is required.",
+            ephemeral=True,
+        )
+        return
+
+    await asyncio.to_thread(
+        memory.set_guild_enabled,
+        interaction.guild.id,
+        False,
+        interaction.user.id,
+    )
+
+    await interaction.response.send_message(
+        "⏸️ Server memory is disabled. New messages will not be collected. "
+        "Previously archived messages remain until an administrator clears them.",
+        ephemeral=True,
+    )
+
+
+@memory_group.command(
+    name="channel-enable",
+    description="Enable memory for a specific text channel",
+)
+@app_commands.describe(channel="Channel to include in memory")
+async def memory_channel_enable(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+):
+    if interaction.guild is None or not is_server_admin(interaction.user):
+        await interaction.response.send_message(
+            "Administrator permission is required.",
+            ephemeral=True,
+        )
+        return
+
+    if channel.guild.id != interaction.guild.id:
+        await interaction.response.send_message(
+            "Choose a channel from this server.",
+            ephemeral=True,
+        )
+        return
+
+    if not channel.permissions_for(interaction.guild.me).view_channel:
+        await interaction.response.send_message(
+            "Koro cannot view that channel.",
+            ephemeral=True,
+        )
+        return
+
+    await asyncio.to_thread(
+        memory.set_channel_enabled,
+        interaction.guild.id,
+        channel.id,
+        True,
+        interaction.user.id,
+    )
+
+    await interaction.response.send_message(
+        f"✅ {channel.mention} is enabled for memory. "
+        "If this is a private channel, only members who can access it "
+        "will be eligible to search its contents.",
+        ephemeral=True,
+    )
+
+
+@memory_group.command(
+    name="channel-disable",
+    description="Disable memory for a text channel and clear its archive",
+)
+@app_commands.describe(channel="Channel to exclude from memory")
+async def memory_channel_disable(
+    interaction: discord.Interaction,
+    channel: discord.TextChannel,
+):
+    if interaction.guild is None or not is_server_admin(interaction.user):
+        await interaction.response.send_message(
+            "Administrator permission is required.",
+            ephemeral=True,
+        )
+        return
+
+    if channel.guild.id != interaction.guild.id:
+        await interaction.response.send_message(
+            "Choose a channel from this server.",
+            ephemeral=True,
+        )
+        return
+
+    await asyncio.to_thread(
+        memory.set_channel_enabled,
+        interaction.guild.id,
+        channel.id,
+        False,
+        interaction.user.id,
+    )
+
+    deleted = await asyncio.to_thread(
+        memory.clear_channel_memory,
+        interaction.guild.id,
+        channel.id,
+    )
+
+    await interaction.response.send_message(
+        f"🔒 {channel.mention} is disabled for memory. "
+        f"Removed {deleted} archived messages from that channel.",
+        ephemeral=True,
+    )
+
+
+@memory_group.command(
+    name="search",
+    description="Search this server's accessible memory",
+)
+@app_commands.describe(query="Keywords to search for")
+async def memory_search(
+    interaction: discord.Interaction,
+    query: str,
+):
+    if interaction.guild is None:
+        await interaction.response.send_message(
+            "Use this command inside a server.",
+            ephemeral=True,
+        )
+        return
+
+    if not memory.is_guild_enabled(interaction.guild.id):
+        await interaction.response.send_message(
+            "Server memory is disabled.",
+            ephemeral=True,
+        )
+        return
+
+    allowed_channels = get_searchable_channels(
+        interaction.guild,
+        interaction.user,
+    )
+
+    results = await asyncio.to_thread(
+        memory.search_messages,
+        interaction.guild.id,
+        query,
+        allowed_channels,
+        8,
+    )
+
+    if not results:
+        await interaction.response.send_message(
+            "No matching messages found in channels you can access.",
+            ephemeral=True,
+        )
+        return
+
+    lines = []
+
+    for row in results:
+        channel = interaction.guild.get_channel(
+            int(row["channel_id"])
+        )
+        channel_label = (
+            channel.mention if channel is not None else "Unknown channel"
+        )
+        snippet = row["content"].replace("\n", " ")[:300]
+
+        lines.append(
+            f"**{row['author_name']}** in {channel_label}:\n{snippet}"
+        )
+
+    await interaction.response.send_message(
+        "\n\n".join(lines)[:1900],
+        ephemeral=True,
+    )
+
+
+class MemoryEnableView(discord.ui.View):
+    def __init__(self, guild_id):
+        super().__init__(timeout=120)
+        self.guild_id = guild_id
+
+    @discord.ui.button(
+        label="Confirm and enable",
+        style=discord.ButtonStyle.success,
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if (
+            interaction.guild is None
+            or interaction.guild.id != self.guild_id
+            or not is_server_admin(interaction.user)
+        ):
+            await interaction.response.send_message(
+                "Only an administrator of this server can confirm.",
+                ephemeral=True,
+            )
+            return
+
+        await asyncio.to_thread(
+            memory.set_guild_enabled,
+            self.guild_id,
+            True,
+            interaction.user.id,
+            True,
+        )
+
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            content=(
+                "✅ Server memory is enabled. Eligible public channels "
+                "will be collected; private channels remain excluded "
+                "until explicitly enabled."
+            ),
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            content="Memory setup cancelled. Collection remains disabled.",
+            view=self,
+        )
+
+
+class MemoryClearView(discord.ui.View):
+    def __init__(self, guild_id):
+        super().__init__(timeout=60)
+        self.guild_id = guild_id
+
+    @discord.ui.button(
+        label="Permanently clear archive",
+        style=discord.ButtonStyle.danger,
+    )
+    async def confirm(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        if (
+            interaction.guild is None
+            or interaction.guild.id != self.guild_id
+            or not is_server_admin(interaction.user)
+        ):
+            await interaction.response.send_message(
+                "Only an administrator of this server can clear memory.",
+                ephemeral=True,
+            )
+            return
+
+        deleted = await asyncio.to_thread(
+            memory.clear_guild_memory,
+            self.guild_id,
+        )
+
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            content=f"🗑️ Cleared {deleted} archived messages for this server.",
+            view=self,
+        )
+
+    @discord.ui.button(
+        label="Cancel",
+        style=discord.ButtonStyle.secondary,
+    )
+    async def cancel(
+        self,
+        interaction: discord.Interaction,
+        button: discord.ui.Button,
+    ):
+        for child in self.children:
+            child.disabled = True
+
+        await interaction.response.edit_message(
+            content="Archive clearing cancelled.",
+            view=self,
+        )
+
+
+@memory_group.command(
+    name="clear",
+    description="Permanently delete this server's archived messages",
+)
+async def memory_clear(interaction: discord.Interaction):
+    if interaction.guild is None or not is_server_admin(interaction.user):
+        await interaction.response.send_message(
+            "Administrator permission is required.",
+            ephemeral=True,
+        )
+        return
+
+    await interaction.response.send_message(
+        "⚠️ **Permanently delete this server's archived messages?** "
+        "This cannot be undone. Server settings will remain unchanged.",
+        view=MemoryClearView(interaction.guild.id),
+        ephemeral=True,
+    )
+
+
+bot.tree.add_command(memory_group)
+
 # EVENTS
 @bot.event
 async def on_ready():
@@ -50,44 +620,74 @@ async def on_ready():
 # ======================
 # AI COMMANDS# ======================
 
+
 @bot.command()
 async def chat(ctx, *, message=None):
 
     if not message:
-
         await ctx.send(
             "Enter something before chatting bruh🥀💔."
         )
-
         return
 
     async with ctx.typing():
-
         try:
+            memory_context = None
+
+            # Retrieve server-specific memories only.
+            if (
+                ctx.guild is not None
+                and memory.is_guild_enabled(ctx.guild.id)
+            ):
+                allowed_channels = get_searchable_channels(
+                    ctx.guild,
+                    ctx.author,
+                )
+
+                results = await asyncio.to_thread(
+                    memory.search_messages,
+                    ctx.guild.id,
+                    message,
+                    allowed_channels,
+                    8,
+                )
+
+                if results:
+                    memory_lines = []
+
+                    for row in results:
+                        channel = ctx.guild.get_channel(
+                            int(row["channel_id"])
+                        )
+
+                        channel_name = (
+                            f"#{channel.name}"
+                            if channel is not None
+                            else "unknown-channel"
+                        )
+
+                        memory_lines.append(
+                            f"[{channel_name}] "
+                            f"{row['author_name']}: "
+                            f"{row['content'][:500]}"
+                        )
+
+                    memory_context = "\n".join(memory_lines)
 
             reply = await asyncio.to_thread(
                 ask_friend,
-                message
+                message,
+                memory_context,
             )
 
             if len(reply) <= 2000:
-
                 await ctx.send(reply)
-
             else:
-
                 for i in range(0, len(reply), 2000):
-
-                    await ctx.send(
-                        reply[i:i + 2000]
-                    )
+                    await ctx.send(reply[i:i + 2000])
 
         except Exception as e:
-
-            print(
-                "CHAT ERROR:",
-                e
-            )
+            print("CHAT ERROR:", e)
 
             await ctx.send(
                 "AI BRAINCELSS FRIED. Please try again later."
